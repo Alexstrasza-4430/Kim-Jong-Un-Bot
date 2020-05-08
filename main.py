@@ -1,21 +1,37 @@
 # Imports
 import discord
+import pymongo
 import os
 import asyncio
-import json
 from helper import *
 from discord.ext import commands
+
+# Load environmental variables
+try:
+    exec(open('variable.py').read())
+except:
+    print('shit does not work, abort mission')
+
+# Connect to mongodb database
+client = pymongo.MongoClient(os.environ.get('dbconn'))
+db = client['DaedBot']
+guildcol = db['prefix']
+queuecol = db['queue']
+playlistcol = db['playlist']
 
 
 # Load custom prefixes
 def get_prefix(client, message):
-    with open('prefixes.json', 'r') as f:
-        prefixes = json.load(f)
-    return prefixes[str(message.guild.id)]
+    extras = guildcol.find_one({'guild_id': message.guild.id})
+    prefixes = extras['prefixes']
+    return commands.when_mentioned_or(*prefixes)(client, message)
 
 
 # Start the bot
-client = commands.Bot(command_prefix=get_prefix, owner_id=os.environ['owner'])
+client = commands.Bot(
+    command_prefix=get_prefix,
+    owner_id=int(os.environ.get('owner'))
+)
 
 
 # Remove default help command
@@ -29,4 +45,4 @@ for filename in os.listdir('./cogs'):
 
 
 # Run the bot
-client.run(os.environ['DISCORD_TOKEN'], reconnect=True)
+client.run(os.environ.get('DISCORD_TOKEN'), reconnect=True)

@@ -2,8 +2,18 @@
 import discord
 import json
 import os
+import math
+import pymongo
+from youtube_dl import utils
 from helper import *
 from discord.ext import commands
+
+# Connect to mongodb database
+client = pymongo.MongoClient(os.environ.get('dbconn'))
+db = client['DaedBot']
+guildcol = db['prefix']
+queuecol = db['queue']
+playlistcol = db['playlist']
 
 
 class System(commands.Cog, name='System'):
@@ -24,7 +34,8 @@ class System(commands.Cog, name='System'):
         await ctx.send(
             embed=create_embed(
                 f"Cog **{extension}** reloaded successfully"
-            )
+            ),
+            delete_after=10
         )
 
     @commands.command(
@@ -40,7 +51,8 @@ class System(commands.Cog, name='System'):
         await ctx.send(
             embed=create_embed(
                 f"Cog **{extension}** loaded successfully"
-            )
+            ),
+            delete_after=10
         )
 
     @commands.command(
@@ -55,7 +67,8 @@ class System(commands.Cog, name='System'):
         await ctx.send(
             embed=create_embed(
                 f"Cog **{extension}** unloaded successfully"
-            )
+            ),
+            delete_after=10
         )
 
     @commands.command(
@@ -64,9 +77,34 @@ class System(commands.Cog, name='System'):
         usage='`.listserver`'
     )
     @commands.is_owner()
-    async def listserver(self, ctx):
-        for guild in self.client.guilds:
-            pass
+    async def listserver(self, ctx, page: int = 1):
+        output = ''
+        guilds = self.client.guilds
+        pages = math.ceil(len(guilds)/10)
+        if 1 <= page <= pages:
+            counter = 1+(page-1)*10
+            for guild in guilds:
+                output += f'{counter}. {guild.name}\n'
+                counter += 1
+            embed = discord.Embed(
+                color=discord.Color.orange(),
+                description=output,
+                title='**GUILD LIST**',
+                timestamp=ctx.message.created_at
+            )
+            embed.set_footer(
+                text=f'Page {page} of {pages}'
+            )
+            await ctx.send(
+                embed=embed
+            )
+        else:
+            await ctx.send(
+                embed=create_embed(
+                    'The page you specified does not exist'
+                ),
+                delete_after=10
+            )
 
     # Error handler
     @reload.error
@@ -126,96 +164,94 @@ class System(commands.Cog, name='System'):
         await self.client.change_presence(
             activity=discord.Activity(
                 type=discord.ActivityType.watching,
-                name=f"{os.environ['activity']} | type .help"
+                name=f"{os.environ.get('activity')} | type {os.environ.get('default_prefix')}help"
             ),
             status=discord.Status.online
         )
 
     @commands.Cog.listener()
-    async def on_disconnect(self):
-        voiceclients = self.client.voice_clients
-        with open('queue.json', 'r') as f:
-            queue = json.load(f)
-        for voice in voiceclients:
-            if voice.is_playing():
-                voice.pause()
-                channel = self.client.get_channel(
-                    int(
-                        queue[str(voice)][0]['text_channel']
-                    )
-                )
-                await channel.send(
-                    embed=create_embed(
-                        'Bot was disconnected from discord, music was paused for you automatically'
-                    )
-                )
-
-    @commands.Cog.listener()
     async def on_ready(self):
         print('Bot logged in as {0.user}'.format(self.client))
         guilds = self.client.guilds
-        with open('prefixes.json', 'r') as f:
-            prefixes = json.load(f)
+        dbguilds = []
+        for item in guildcol.find():
+            if item['prefixes'][0] != os.environ.get('default_prefix'):
+                guildcol.update_one(
+                    {'guild_id': item['guild_id']},
+                    {
+                        '$set': {
+                            'prefixes.0': os.environ.get('default_prefix')
+                        }
+                    }
+                )
+            dbguilds.append(item['guild_id'])
         for guild in guilds:
-            if str(guild.id) not in prefixes:
-                prefixes[str(guild.id)] = ['.', ]
-        with open('prefixes.json', 'w') as f:
-            json.dump(prefixes, f, indent=4)
-        with open('playlist.json', 'r') as f:
-            playlist = json.load(f)
-        for guild in guilds:
-            if str(guild.id) not in playlist:
-                playlist[str(guild.id)] = {}
-        with open('playlist.json', 'w') as f:
-            json.dump(playlist, f, indent=4)
+            if guild.id not in dbguilds:
+                guildcol.insert_one(
+                    {
+                        'guild_id': guild.id,
+                        'prefixes': [
+                            os.environ.get('default_prefix'),
+                        ],
+                        'announcement_join_channel': None,
+                        'announcement_join_message': None,
+                        'announcement_leave_channel': None,
+                        'announcement_leave_message': None
+                    }
+                )
 
     @commands.Cog.listener()
     async def on_member_join(self, member):
-        print("{0} has joined the server .".format(member))
-        await member.guild.system_channel.send(
-            embed=create_embed(
-                f"**{member}** has joined the server."
+        guildid = member.guild.id
+        guildinfo = guildcol.find_one({'guild_id': guildid})
+        if guildinfo['announcement_join_channel'] != None:
+            channel = member.guild.get_channel(
+                guildinfo['announcement_join_channel']
             )
-        )
+            await channel.send(
+                embed=create_embed(
+                    guildinfo['announcement_join_message'].format(
+                        member.mention
+                    )
+                )
+            )
 
     @commands.Cog.listener()
     async def on_member_remove(self, member):
-        print(f"{member} has left the server.")
-        await member.guild.system_channel.send(
-            embed=create_embed(
-                f"**{member}** has left the server, RIP"
+        guildid = member.guild.id
+        guildinfo = guildcol.find_one({'guild_id': guildid})
+        if guildinfo['announcement_leave_channel'] != None:
+            channel = member.guild.get_channel(
+                guildinfo['announcement_leave_channel']
             )
-        )
+            await channel.send(
+                embed=create_embed(
+                    guildinfo['announcement_leave_message'].format(
+                        member.mention
+                    )
+                )
+            )
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild):
-        with open('prefixes.json', 'r') as f:
-            prefixes = json.load(f)
-        prefixes[str(guild.id)] = ['.', ]
-        with open('prefixes.json', 'w') as f:
-            json.dump(prefixes, f, indent=4)
-        with open('playlist.json', 'r') as f:
-            playlist = json.load(f)
-        playlist[str(guild.id)] = {}
-        with open('playlist.json', 'w') as f:
-            json.dump(playlist, f, indent=4)
+        guildcol.insert_one(
+            {
+                'guild_id': guild.id,
+                'prefixes': [
+                    os.environ.get('default_prefix'),
+                ],
+                'announcement_join_channel': None,
+                'announcement_join_message': None,
+                'announcement_leave_channel': None,
+                'announcement_leave_message': None,
+            }
+        )
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild):
-        with open('prefixes.json', 'r') as f:
-            prefixes = json.load(f)
-        prefixes.pop(str(guild.id))
-        with open('prefixes.json', 'w') as f:
-            json.dump(prefixes, f, indent=4)
-        with open('playlist.json', 'r') as f:
-            playlist = json.load(f)
-        playlist.pop(str(guild.id))
-        with open('playlist.json', 'w') as f:
-            json.dump(playlist, f, indent=4)
-
-    @commands.Cog.listener()
-    async def on_command(self, ctx):
-        await ctx.message.delete()
+        guildcol.delete_one({'guild_id': guild.id})
+        queuecol.delete_many({'guild_id': guild.id})
+        playlistcol.delete_many({'guild_id': guild.id})
 
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
@@ -223,6 +259,20 @@ class System(commands.Cog, name='System'):
             await ctx.send(
                 embed=create_embed(
                     'Command not found'
+                ),
+                delete_after=10
+            )
+            await ctx.message.delete()
+        elif isinstance(error, utils.UnavailableVideoError):
+            await ctx.send(
+                embed=create_embed(
+                    'There is an error with Youtube service, please try again'
+                )
+            )
+        elif isinstance(error, utils.ExtractorError):
+            await ctx.send(
+                embed=create_embed(
+                    'There is an error with Youtube service, please try again'
                 )
             )
 
