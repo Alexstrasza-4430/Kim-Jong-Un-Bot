@@ -253,6 +253,8 @@ class System(commands.Cog, name='System'):
         queuecol.delete_many({'guild_id': guild.id})
         playlistcol.delete_many({'guild_id': guild.id})
 
+
+'''
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
         if isinstance(error, commands.CommandNotFound):
@@ -263,18 +265,7 @@ class System(commands.Cog, name='System'):
                 delete_after=10
             )
             await ctx.message.delete()
-        elif isinstance(error, utils.UnavailableVideoError):
-            await ctx.send(
-                embed=create_embed(
-                    'There is an error with Youtube service, please try again'
-                )
-            )
-        elif isinstance(error, utils.ExtractorError):
-            await ctx.send(
-                embed=create_embed(
-                    'There is an error with Youtube service, please try again'
-                )
-            )
+'''
 
 
 def setup(client):
