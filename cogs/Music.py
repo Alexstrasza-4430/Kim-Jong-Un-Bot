@@ -58,13 +58,30 @@ class Music(commands.Cog, name='Music'):
             'noplaylist': False,
             # 'extract_flat': 'in_playlist',
             'nocheckcertificate': True,
-            'ignoreerrors': True,
+            'ignoreerrors': False,
             'logtostderr': False,
             'no_warnings': True,
             'include_ads': False,
             'skip_download': True,
             'source_address': '0.0.0.0'
         }
+
+    def extract_info(self, url, ctx):
+        try:
+            with youtube_dl.YoutubeDL(self.opts) as ydl:
+                info = ydl.extract_info(
+                    url,
+                    download=False
+                )
+        except (utils.ExtractorError, utils.DownloadError, utils.UnavailableVideoError) as error:
+            asyncio.run_coroutine_threadsafe(
+                ctx.send(
+                    embed=create_embed(
+                        'There is an error with Youtube service, please try again'
+                    ), delete_after=10
+                ), self.client.loop
+            )
+        return info
 
     def ensure_bot_alone(self, ctx):
         if ctx.voice_client == None:
@@ -98,8 +115,7 @@ class Music(commands.Cog, name='Music'):
                         delete_after=10
                     ), self.client.loop
                 )
-            else:
-                break
+            break
         volume = item['volume']
         voice = guild.voice_client
         source = create_ytdl_source(info['url'], volume)
@@ -270,7 +286,7 @@ class Music(commands.Cog, name='Music'):
                             voice.stop()
                         else:
                             queuecol.delete_one({'guild_id': ctx.guild.id})
-                            voice.disconnect()
+                            await voice.disconnect()
                         await ctx.send(
                             embed=create_embed(
                                 f'Bot disconnected from **{voice.channel}**'
@@ -305,38 +321,24 @@ class Music(commands.Cog, name='Music'):
         voice = ctx.voice_client
         if voice != None:  # Bot already in voice channel
             if voice.channel != channel:  # User in a different channel
-                if self.ensure_bot_alone(ctx):  # Check if bot is available
-                    try:
-                        # Get song info
-                        with youtube_dl.YoutubeDL(self.opts) as ydl:
-                            info = ydl.extract_info(
-                                url,
-                                download=False
-                            )
-                    except (utils.ExtractorError, utils.DownloadError, utils.UnavailableVideoError) as error:
-                        await ctx.send(
-                            embed=create_embed(
-                                'There is an error with Youtube service, please try again'
-                            )
-                        )
-                        print('shit')
-                    else:
-                        # Delete the current queue
-                        if voice.is_playing() or voice.is_paused():
-                            queuecol.update_one(
-                                {'guild_id': ctx.guild.id},
-                                {
-                                    '$set': {
-                                        'size': 0,
-                                    }
+                if self.ensure_bot_alone(ctx):   # Check if bot is available
+                    info = self.extract_info(url, ctx)
+                    # Delete the current queue
+                    if voice.is_playing() or voice.is_paused():
+                        queuecol.update_one(
+                            {'guild_id': ctx.guild.id},
+                            {
+                                '$set': {
+                                    'size': 0,
                                 }
-                            )
-                            voice.stop()
-                            voice = channel.connect(reconnect=True)
-                        else:
-                            # Move the bot to the new channel
-                            queuecol.delete_one({'guild_id': ctx.guild.id})
-                            await voice.move_to(channel)
+                            }
+                        )
+                        voice.stop()
+                        voice = await channel.connect(reconnect=True)
+                    else:
+                        # Move the bot to the new channel
+                        queuecol.delete_one({'guild_id': ctx.guild.id})
+                        await voice.move_to(channel)
                         # Create a new queue
                         queuecol.insert_one(
                             {
@@ -420,7 +422,7 @@ class Music(commands.Cog, name='Music'):
                                     }
                                 }
                             )
-                        # Start playing
+                            # Start playing
                         self.play_song(ctx.guild)
                 else:  # Bot is not available
                     await ctx.send(
@@ -431,259 +433,30 @@ class Music(commands.Cog, name='Music'):
                     )
             else:  # User in the same channel as bot
                 if voice.is_playing() or voice.is_paused():  # Bot is playing music
-                    try:
-                        # Get song info
-                        with youtube_dl.YoutubeDL(self.opts) as ydl:
-                            info = ydl.extract_info(
-                                url,
-                                download=False
-                            )
-                    except (utils.ExtractorError, utils.DownloadError, utils.UnavailableVideoError) as error:
-                        await ctx.send(
-                            embed=create_embed(
-                                'There is an error with Youtube service, please try again'
-                            )
-                        )
-                    else:
-                        # Check if ytdl gives a playlist
-                        if "_type" in info and info["_type"] == "playlist":
-                            # The playlist is not supported
-                            if 'title' not in info['entries'][0]:
-                                await ctx.send(
-                                    embed=create_embed(
-                                        'This playlist link is not supported'
-                                    ),
-                                    delete_after=10
-                                )
-                            else:
-                                # The playlist only have one song
-                                if len(info['entries']) == 1:
-                                    # Get song metadata
-                                    song_info = info['entries'][0]
-                                    # Insert the song into queue
-                                    queuecol.update_one(
-                                        {'guild_id': ctx.guild.id},
-                                        {
-                                            '$push': {
-                                                'queue': {
-                                                    'url': song_info['webpage_url'],
-                                                    'title': song_info['title']
-                                                }
-                                            },
-                                            '$inc': {
-                                                'size': 1
-                                            }
-                                        }
-                                    )
-                                    await ctx.send(
-                                        embed=create_embed(
-                                            f'Song [{song_info["title"]}]({song_info["webpage_url"]}) added to queue'
-                                        ),
-                                        delete_after=10
-                                    )
-                                else:
-                                    # Insert all songs into queue
-                                    for song in info['entries']:
-                                        queuecol.update_one(
-                                            {'guild_id': ctx.guild.id},
-                                            {
-                                                '$push': {
-                                                    'queue': {
-                                                        'url': song['webpage_url'],
-                                                        'title': song['title']
-                                                    }
-                                                },
-                                                '$inc': {
-                                                    'size': 1
-                                                }
-                                            }
-                                        )
-                                    await ctx.send(
-                                        embed=create_embed(
-                                            f'{len(info["entries"])} songs added to queue'
-                                        ),
-                                        delete_after=10
-                                    )
-                        else:
-                            # Insert song from an url
-                            queuecol.update_one(
-                                {'guild_id': ctx.guild.id},
-                                {
-                                    '$push': {
-                                        'queue': {
-                                            'url': info['webpage_url'],
-                                            'title': info['title']
-                                        }
-                                    },
-                                    '$inc': {
-                                        'size': 1
-                                    }
-                                }
-                            )
+                    info = self.extract_info(url, ctx)
+                    # Check if ytdl gives a playlist
+                    if "_type" in info and info["_type"] == "playlist":
+                        # The playlist is not supported
+                        if 'title' not in info['entries'][0]:
                             await ctx.send(
                                 embed=create_embed(
-                                    f'Song [{info["title"]}]({info["webpage_url"]}) added to queue'
+                                    'This playlist link is not supported'
                                 ),
                                 delete_after=10
                             )
-                else:  # Bot is not playing any music
-                    try:
-                        # Get song info
-                        with youtube_dl.YoutubeDL(self.opts) as ydl:
-                            info = ydl.extract_info(
-                                url,
-                                download=False
-                            )
-                    except (utils.ExtractorError, utils.DownloadError, utils.UnavailableVideoError) as error:
-                        await ctx.send(
-                            embed=create_embed(
-                                'There is an error with Youtube service, please try again'
-                            )
-                        )
-                    else:
-                        # Check if ytdl gives a playlist
-                        if "_type" in info and info["_type"] == "playlist":
-                            # The playlist is not supported
-                            if 'title' not in info['entries'][0]:
-                                await ctx.send(
-                                    embed=create_embed(
-                                        'This playlist link is not supported'
-                                    ),
-                                    delete_after=10
-                                )
-                            else:
-                                # The playlist only have one song
-                                if len(info['entries']) == 1:
-                                    # Get song metadata
-                                    song_info = info['entries'][0]
-                                    # Insert the song into queue
-                                    queuecol.update_one(
-                                        {'guild_id': ctx.guild.id},
-                                        {
-                                            '$push': {
-                                                'queue': {
-                                                    'url': song_info['webpage_url'],
-                                                    'title': song_info['title']
-                                                }
-                                            },
-                                            '$inc': {
-                                                'size': 1
-                                            }
-                                        }
-                                    )
-                                else:
-                                    # Insert all songs into queue
-                                    for song in info['entries']:
-                                        queuecol.update_one(
-                                            {'guild_id': ctx.guild.id},
-                                            {
-                                                '$push': {
-                                                    'queue': {
-                                                        'url': song['webpage_url'],
-                                                        'title': song['title']
-                                                    }
-                                                },
-                                                '$inc': {
-                                                    'size': 1
-                                                }
-                                            }
-                                        )
-                                    await ctx.send(
-                                        embed=create_embed(
-                                            f'{len(info["entries"])} songs from [link]({url}) added to queue'
-                                        ),
-                                        delete_after=10
-                                    )
                         else:
-                            # Insert song from an url
-                            queuecol.update_one(
-                                {'guild_id': ctx.guild.id},
-                                {
-                                    '$push': {
-                                        'queue': {
-                                            'url': info['webpage_url'],
-                                            'title': info['title']
-                                        }
-                                    },
-                                    '$inc': {
-                                        'size': 1
-                                    }
-                                }
-                            )
-                        # Start playing
-                        self.play_song(ctx.guild)
-        else:  # Bot is not connected to any voice channel
-            # Connects bot to a voice channel
-            voice = await channel.connect(reconnect=True)
-            try:
-                # Get song info
-                with youtube_dl.YoutubeDL(self.opts) as ydl:
-                    info = ydl.extract_info(
-                        url,
-                        download=False
-                    )
-            except (utils.ExtractorError, utils.DownloadError, utils.UnavailableVideoError) as error:
-                await ctx.send(
-                    embed=create_embed(
-                        'There is an error with Youtube service, please try again'
-                    )
-                )
-            else:
-                # Create a new queue
-                if queuecol.find_one({'guild_id': ctx.guild.id}) != None:
-                    queuecol.delete_one({'guild_id': ctx.guild.id})
-                queuecol.insert_one(
-                    {
-                        'guild_id': ctx.guild.id,
-                        'text_channel': ctx.channel.id,
-                        'voice_channel': voice.channel.id,
-                        'state': 'Playing',
-                        'loop': 'off',
-                        'volume': 0.5,
-                        'pointer': 0,
-                        'size': 0,
-                        'queue': [],
-                    }
-                )
-                # Check if ytdl gives a playlist
-                if "_type" in info and info["_type"] == "playlist":
-                    # The playlist is not supported
-                    if 'title' not in info['entries'][0]:
-                        await ctx.send(
-                            embed=create_embed(
-                                'This playlist link is not supported'
-                            ),
-                            delete_after=10
-                        )
-                    else:
-                        if len(info['entries']) == 1:  # The playlist only have one song
-                            # Get song metadata
-                            song_info = info['entries'][0]
-                            # Insert the song into queue
-                            queuecol.update_one(
-                                {'guild_id': ctx.guild.id},
-                                {
-                                    '$push': {
-                                        'queue': {
-                                            'url': song_info['webpage_url'],
-                                            'title': song_info['title']
-                                        }
-                                    },
-                                    '$inc': {
-                                        'size': 1
-                                    }
-                                }
-                            )
-                        else:
-                            # Insert all songs into queue
-                            for song in info['entries']:
+                            # The playlist only have one song
+                            if len(info['entries']) == 1:
+                                # Get song metadata
+                                song_info = info['entries'][0]
+                                # Insert the song into queue
                                 queuecol.update_one(
                                     {'guild_id': ctx.guild.id},
                                     {
                                         '$push': {
                                             'queue': {
-                                                'url': song['webpage_url'],
-                                                'title': song['title']
+                                                'url': song_info['webpage_url'],
+                                                'title': song_info['title']
                                             }
                                         },
                                         '$inc': {
@@ -691,30 +464,220 @@ class Music(commands.Cog, name='Music'):
                                         }
                                     }
                                 )
+                                await ctx.send(
+                                    embed=create_embed(
+                                        f'Song [{song_info["title"]}]({song_info["webpage_url"]}) added to queue'
+                                    ),
+                                    delete_after=10
+                                )
+                            else:
+                                # Insert all songs into queue
+                                for song in info['entries']:
+                                    queuecol.update_one(
+                                        {'guild_id': ctx.guild.id},
+                                        {
+                                            '$push': {
+                                                'queue': {
+                                                    'url': song['webpage_url'],
+                                                    'title': song['title']
+                                                }
+                                            },
+                                            '$inc': {
+                                                'size': 1
+                                            }
+                                        }
+                                    )
+                                await ctx.send(
+                                    embed=create_embed(
+                                        f'{len(info["entries"])} songs added to queue'
+                                    ),
+                                    delete_after=10
+                                )
+                    else:
+                        # Insert song from an url
+                        queuecol.update_one(
+                            {'guild_id': ctx.guild.id},
+                            {
+                                '$push': {
+                                    'queue': {
+                                        'url': info['webpage_url'],
+                                        'title': info['title']
+                                    }
+                                },
+                                '$inc': {
+                                    'size': 1
+                                }
+                            }
+                        )
+                        await ctx.send(
+                            embed=create_embed(
+                                f'Song [{info["title"]}]({info["webpage_url"]}) added to queue'
+                            ),
+                            delete_after=10
+                        )
+                else:  # Bot is not playing any music
+                    info = self.extract_info(url, ctx)
+                    # Check if ytdl gives a playlist
+                    if "_type" in info and info["_type"] == "playlist":
+                        # The playlist is not supported
+                        if 'title' not in info['entries'][0]:
                             await ctx.send(
                                 embed=create_embed(
-                                    f'{len(info["entries"])} songs from [link]({url}) added to queue'
+                                    'This playlist link is not supported'
                                 ),
                                 delete_after=10
                             )
-                else:
-                    # Insert song from an url
-                    queuecol.update_one(
-                        {'guild_id': ctx.guild.id},
-                        {
-                            '$push': {
-                                'queue': {
-                                    'url': info['webpage_url'],
-                                    'title': info['title']
+                        else:
+                            # The playlist only have one song
+                            if len(info['entries']) == 1:
+                                # Get song metadata
+                                song_info = info['entries'][0]
+                                # Insert the song into queue
+                                queuecol.update_one(
+                                    {'guild_id': ctx.guild.id},
+                                    {
+                                        '$push': {
+                                            'queue': {
+                                                'url': song_info['webpage_url'],
+                                                'title': song_info['title']
+                                            }
+                                        },
+                                        '$inc': {
+                                            'size': 1
+                                        }
+                                    }
+                                )
+                            else:
+                                # Insert all songs into queue
+                                for song in info['entries']:
+                                    queuecol.update_one(
+                                        {'guild_id': ctx.guild.id},
+                                        {
+                                            '$push': {
+                                                'queue': {
+                                                    'url': song['webpage_url'],
+                                                    'title': song['title']
+                                                }
+                                            },
+                                            '$inc': {
+                                                'size': 1
+                                            }
+                                        }
+                                    )
+                                await ctx.send(
+                                    embed=create_embed(
+                                        f'{len(info["entries"])} songs from [link]({url}) added to queue'
+                                    ),
+                                    delete_after=10
+                                )
+                    else:
+                        # Insert song from an url
+                        queuecol.update_one(
+                            {'guild_id': ctx.guild.id},
+                            {
+                                '$push': {
+                                    'queue': {
+                                        'url': info['webpage_url'],
+                                        'title': info['title']
+                                    }
+                                },
+                                '$inc': {
+                                    'size': 1
                                 }
-                            },
-                            '$inc': {
-                                'size': 1
                             }
-                        }
+                        )
+                    # Start playing
+                    self.play_song(ctx.guild)
+        else:  # Bot is not connected to any voice channel
+            # Connects bot to a voice channel
+            voice = await channel.connect(reconnect=True)
+            info = self.extract_info(url, ctx)
+            # Create a new queue
+            if queuecol.find_one({'guild_id': ctx.guild.id}) != None:
+                queuecol.delete_one({'guild_id': ctx.guild.id})
+            queuecol.insert_one(
+                {
+                    'guild_id': ctx.guild.id,
+                    'text_channel': ctx.channel.id,
+                    'voice_channel': voice.channel.id,
+                    'state': 'Playing',
+                    'loop': 'off',
+                    'volume': 0.5,
+                    'pointer': 0,
+                    'size': 0,
+                    'queue': [],
+                }
+            )
+            # Check if ytdl gives a playlist
+            if "_type" in info and info["_type"] == "playlist":
+                # The playlist is not supported
+                if 'title' not in info['entries'][0]:
+                    await ctx.send(
+                        embed=create_embed(
+                            'This playlist link is not supported'
+                        ),
+                        delete_after=10
                     )
-                # Start playing
-                self.play_song(ctx.guild)
+                else:
+                    if len(info['entries']) == 1:  # The playlist only have one song
+                        # Get song metadata
+                        song_info = info['entries'][0]
+                        # Insert the song into queue
+                        queuecol.update_one(
+                            {'guild_id': ctx.guild.id},
+                            {
+                                '$push': {
+                                    'queue': {
+                                        'url': song_info['webpage_url'],
+                                        'title': song_info['title']
+                                    }
+                                },
+                                '$inc': {
+                                    'size': 1
+                                }
+                            }
+                        )
+                    else:
+                        # Insert all songs into queue
+                        for song in info['entries']:
+                            queuecol.update_one(
+                                {'guild_id': ctx.guild.id},
+                                {
+                                    '$push': {
+                                        'queue': {
+                                            'url': song['webpage_url'],
+                                            'title': song['title']
+                                        }
+                                    },
+                                    '$inc': {
+                                        'size': 1
+                                    }
+                                }
+                            )
+                        await ctx.send(
+                            embed=create_embed(
+                                f'{len(info["entries"])} songs from [link]({url}) added to queue'
+                            ),
+                            delete_after=10
+                        )
+            else:
+                # Insert song from an url
+                queuecol.update_one(
+                    {'guild_id': ctx.guild.id},
+                    {
+                        '$push': {
+                            'queue': {
+                                'url': info['webpage_url'],
+                                'title': info['title']
+                            }
+                        },
+                        '$inc': {
+                            'size': 1
+                        }
+                    }
+                )
+            # Start playing
+            self.play_song(ctx.guild)
 
     @commands.command(
         name='pause',
@@ -946,90 +909,82 @@ class Music(commands.Cog, name='Music'):
     )
     @ensure_voice()
     async def skip(self, ctx, pos: int = 0):
-        if ctx.author.voice == None:
-            await ctx.send(
-                embed=create_embed(
-                    'You must be connected to a voice channel to use this command'
-                ),
-                delete_after=10
-            )
-        else:
-            channel = ctx.author.voice.channel
-            voice = ctx.voice_client
-            if voice != None:
-                if voice.channel != channel:
+        channel = ctx.author.voice.channel
+        voice = ctx.voice_client
+        if voice != None:
+            if voice.channel != channel:
+                await ctx.send(
+                    embed=create_embed(
+                        'Please wait until other members are done listening to music'
+                    ),
+                    delete_after=10
+                )
+            else:
+                item = queuecol.find_one({'guild_id': ctx.guild.id})
+                pointer = item['pointer']
+                queue = item['queue']
+                if item['size'] == 0:
+                    pass
+                elif pos < 1 or pos > item['size']:
                     await ctx.send(
                         embed=create_embed(
-                            'Please wait until other members are done listening to music'
+                            f'The queue only have {item["size"]} songs, but you specified more than that'
+                        )
+                    )
+                elif pos == 0:
+                    song = queue[pointer]
+                    await ctx.send(
+                        embed=create_embed(
+                            f'Skipped [{song["title"]}]({song["url"]})'
+                        ),
+                        delete_after=10
+                    )
+                elif item['loop'] == 'one':
+                    song = queue[pointer]
+                    queuecol.update_one(
+                        {'guild_id': ctx.guild.id},
+                        {
+                            '$set': {
+                                'pointer': pos-1
+                            }
+                        }
+                    )
+                    await ctx.send(
+                        embed=create_embed(
+                            f'Skipped [{song["title"]}]({song["url"]})'
                         ),
                         delete_after=10
                     )
                 else:
-                    item = queuecol.find_one({'guild_id': ctx.guild.id})
-                    pointer = item['pointer']
-                    queue = item['queue']
-                    if item['size'] == 0:
-                        pass
-                    elif pos < 1 or pos > item['size']:
-                        await ctx.send(
-                            embed=create_embed(
-                                f'The queue only have {item["size"]} songs, but you specified more than that'
-                            )
-                        )
-                    elif pos == 0:
-                        song = queue[pointer]
-                        await ctx.send(
-                            embed=create_embed(
-                                f'Skipped [{song["title"]}]({song["url"]})'
-                            ),
-                            delete_after=10
-                        )
-                    elif item['loop'] == 'one':
-                        song = queue[pointer]
-                        queuecol.update_one(
-                            {'guild_id': ctx.guild.id},
-                            {
-                                '$set': {
-                                    'pointer': pos-1
-                                }
+                    song = queue[pointer]
+                    queuecol.update_one(
+                        {'guild_id': ctx.guild.id},
+                        {
+                            '$set': {
+                                'pointer': pos-2
                             }
-                        )
-                        await ctx.send(
-                            embed=create_embed(
-                                f'Skipped [{song["title"]}]({song["url"]})'
-                            ),
-                            delete_after=10
-                        )
-                    else:
-                        song = queue[pointer]
-                        queuecol.update_one(
-                            {'guild_id': ctx.guild.id},
-                            {
-                                '$set': {
-                                    'pointer': pos-2
-                                }
-                            }
-                        )
-                        await ctx.send(
-                            embed=create_embed(
-                                f'Skipped [{song["title"]}]({song["url"]})'
-                            ),
-                            delete_after=10
-                        )
-                    voice.stop()
-
-            else:
-                await ctx.send(
-                    embed=create_embed(
-                        'Bot was not connected to any voice channel'
-                    ),
-                    delete_after=10
-                )
+                        }
+                    )
+                    await ctx.send(
+                        embed=create_embed(
+                            f'Skipped [{song["title"]}]({song["url"]})'
+                        ),
+                        delete_after=10
+                    )
+                voice.stop()
+        else:
+            await ctx.send(
+                embed=create_embed(
+                    'Bot was not connected to any voice channel'
+                ),
+                delete_after=10
+            )
 
     @commands.command(
         name='volume',
         description='Changes the volume (max=300)',
-        aliases=['vol', ]
+        aliases=['vol', ],
+        usage='`.vol [volume]`'
     )
     @ensure_voice()
     async def volume(self, ctx, volume: int):
@@ -1450,7 +1405,7 @@ class Music(commands.Cog, name='Music'):
                                 }
                             )
                             voice.stop()
-                            voice = channel.connect(reconnect=True)
+                            voice = await channel.connect(reconnect=True)
                         else:
                             queuecol.delete_one({'guild_id': ctx.guild.id})
                             await voice.move_to(channel)
@@ -1636,30 +1591,43 @@ class Music(commands.Cog, name='Music'):
             }
         )
         if playlist != None:
-            try:
-                with youtube_dl.YoutubeDL(self.opts) as ydl:
-                    info = ydl.extract_info(
-                        url,
-                        download=False
+            info = self.extract_info(url, ctx)
+            if "_type" in info and info["_type"] == "playlist":
+                if 'title' not in info['entries'][0]:
+                    await ctx.send(
+                        embed=create_embed(
+                            'This playlist link is not supported'
+                        ),
+                        delete_after=10
                     )
-            except (utils.ExtractorError, utils.DownloadError, utils.UnavailableVideoError) as error:
-                await ctx.send(
-                    embed=create_embed(
-                        'There is an error with Youtube service, please try again'
-                    )
-                )
-            else:
-                if "_type" in info and info["_type"] == "playlist":
-                    if 'title' not in info['entries'][0]:
+                else:
+                    if len(info['entries']) == 1:
+                        song_info = info['entries'][0]
+                        playlistcol.update_one(
+                            {
+                                'guild_id': ctx.guild.id,
+                                'name': name
+                            },
+                            {
+                                '$push': {
+                                    'song_list': {
+                                        'url': song_info['webpage_url'],
+                                        'title': song_info['title']
+                                    }
+                                },
+                                '$inc': {
+                                    'size': 1
+                                }
+                            }
+                        )
                         await ctx.send(
                             embed=create_embed(
-                                'This playlist link is not supported'
+                                f'Song [{song_info["title"]}]({song_info["webpage_url"]}) added to **{name}**'
                             ),
                             delete_after=10
                         )
                     else:
-                        if len(info['entries']) == 1:
-                            song_info = info['entries'][0]
+                        for song in info['entries']:
                             playlistcol.update_one(
                                 {
                                     'guild_id': ctx.guild.id,
@@ -1668,8 +1636,8 @@ class Music(commands.Cog, name='Music'):
                                 {
                                     '$push': {
                                         'song_list': {
-                                            'url': song_info['webpage_url'],
-                                            'title': song_info['title']
+                                            'url': song['webpage_url'],
+                                            'title': song['title']
                                         }
                                     },
                                     '$inc': {
@@ -1677,61 +1645,36 @@ class Music(commands.Cog, name='Music'):
                                     }
                                 }
                             )
-                            await ctx.send(
-                                embed=create_embed(
-                                    f'Song [{song_info["title"]}]({song_info["webpage_url"]}) added to **{name}**'
-                                ),
-                                delete_after=10
-                            )
-                        else:
-                            for song in info['entries']:
-                                playlistcol.update_one(
-                                    {
-                                        'guild_id': ctx.guild.id,
-                                        'name': name
-                                    },
-                                    {
-                                        '$push': {
-                                            'song_list': {
-                                                'url': song['webpage_url'],
-                                                'title': song['title']
-                                            }
-                                        },
-                                        '$inc': {
-                                            'size': 1
-                                        }
-                                    }
-                                )
-                            await ctx.send(
-                                embed=create_embed(
-                                    f'{len(info["entries"])} songs added to **{name}**'
-                                ),
-                                delete_after=10
-                            )
-                else:
-                    playlistcol.update_one(
-                        {
-                            'guild_id': ctx.guild.id,
-                            'name': name
-                        },
-                        {
-                            '$push': {
-                                'song_list': {
-                                    'url': info['webpage_url'],
-                                    'title': info['title']
-                                }
-                            },
-                            '$inc': {
-                                'size': 1
+                        await ctx.send(
+                            embed=create_embed(
+                                f'{len(info["entries"])} songs added to **{name}**'
+                            ),
+                            delete_after=10
+                        )
+            else:
+                playlistcol.update_one(
+                    {
+                        'guild_id': ctx.guild.id,
+                        'name': name
+                    },
+                    {
+                        '$push': {
+                            'song_list': {
+                                'url': info['webpage_url'],
+                                'title': info['title']
                             }
+                        },
+                        '$inc': {
+                            'size': 1
                         }
-                    )
-                    await ctx.send(
-                        embed=create_embed(
-                            f'Song [{info["title"]}]({info["webpage_url"]}) added to **{name}**'
-                        ),
-                        delete_after=10
-                    )
+                    }
+                )
+                await ctx.send(
+                    embed=create_embed(
+                        f'Song [{info["title"]}]({info["webpage_url"]}) added to **{name}**'
+                    ),
+                    delete_after=10
+                )
         else:
             await ctx.send(
                 embed=create_embed(
@@ -1777,7 +1720,7 @@ class Music(commands.Cog, name='Music'):
                     },
                     {
                         '$pull': {
-                            'queue': None
+                            'song_list': None
                         }
                     }
                 )
@@ -1871,17 +1814,20 @@ class Music(commands.Cog, name='Music'):
                 voice_channel = guild.get_channel(queue['voice_channel'])
                 voice = await voice_channel.connect(reconnect=True)
                 if queue['state'] == 'Playing':
-                    self.play_song(guild)
-                    text_channel = guild.get_channel(queue['text_channel'])
-                    await text_channel.send(
-                        embed=create_embed(
-                            'Bot was restarted, playing from the most recent song in queue'
-                        ),
-                        delete_after=10
-                    )
+                    if queue['size'] >= 1:
+                        self.play_song(guild)
+                        text_channel = guild.get_channel(queue['text_channel'])
+                        await text_channel.send(
+                            embed=create_embed(
+                                'Bot was restarted, playing from the most recent song in queue'
+                            ),
+                            delete_after=10
+                        )
             else:
-                if queue['state'] == 'Playing':
-                    voice.resume()
+                if voice.is_paused():
+                    if queue['state'] == 'Playing':
+                        if queue['size'] >= 1:
+                            voice.resume()
 
     @commands.Cog.listener()
     async def on_disconnect(self):
