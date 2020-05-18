@@ -908,7 +908,7 @@ class Music(commands.Cog, name='Music'):
         usage='`.skip [position]`'
     )
     @ensure_voice()
-    async def skip(self, ctx, pos: int = 0):
+    async def skip(self, ctx, pos: int = None):
         channel = ctx.author.voice.channel
         voice = ctx.voice_client
         if voice != None:
@@ -924,14 +924,13 @@ class Music(commands.Cog, name='Music'):
                 pointer = item['pointer']
                 queue = item['queue']
                 if item['size'] == 0:
-                    pass
-                elif pos < 1 or pos > item['size']:
                     await ctx.send(
                         embed=create_embed(
-                            f'The queue only have {item["size"]} songs, but you specified more than that'
-                        )
+                            'The music queue is empty'
+                        ),
+                        delete_after=10
                     )
-                elif pos == 0:
+                elif pos == None:
                     song = queue[pointer]
                     await ctx.send(
                         embed=create_embed(
@@ -939,39 +938,47 @@ class Music(commands.Cog, name='Music'):
                         ),
                         delete_after=10
                     )
-                elif item['loop'] == 'one':
-                    song = queue[pointer]
-                    queuecol.update_one(
-                        {'guild_id': ctx.guild.id},
-                        {
-                            '$set': {
-                                'pointer': pos-1
-                            }
-                        }
-                    )
+                    voice.stop()
+                elif pos < 1 or pos > item['size']:
                     await ctx.send(
                         embed=create_embed(
-                            f'Skipped [{song["title"]}]({song["url"]})'
+                            f'The queue only have {item["size"]} songs, but you specified more than that'
                         ),
                         delete_after=10
                     )
                 else:
                     song = queue[pointer]
-                    queuecol.update_one(
-                        {'guild_id': ctx.guild.id},
-                        {
-                            '$set': {
-                                'pointer': pos-2
+                    if item['loop'] == 'one':
+                        queuecol.update_one(
+                            {'guild_id': ctx.guild.id},
+                            {
+                                '$set': {
+                                    'pointer': pos-1
+                                }
                             }
-                        }
-                    )
-                    await ctx.send(
-                        embed=create_embed(
-                            f'Skipped [{song["title"]}]({song["url"]})'
-                        ),
-                        delete_after=10
-                    )
-                voice.stop()
+                        )
+                        await ctx.send(
+                            embed=create_embed(
+                                f'Skipped [{song["title"]}]({song["url"]})'
+                            ),
+                            delete_after=10
+                        )
+                    else:
+                        queuecol.update_one(
+                            {'guild_id': ctx.guild.id},
+                            {
+                                '$set': {
+                                    'pointer': pos-2
+                                }
+                            }
+                        )
+                        await ctx.send(
+                            embed=create_embed(
+                                f'Skipped [{song["title"]}]({song["url"]})'
+                            ),
+                            delete_after=10
+                        )
+                    voice.stop()
         else:
             await ctx.send(
                 embed=create_embed(
@@ -1002,6 +1009,13 @@ class Music(commands.Cog, name='Music'):
                 await ctx.send(
                     embed=create_embed(
                         'Please wait until other members are done listening to music'
+                    ),
+                    delete_after=10
+                )
+            elif volume == None:
+                await ctx.send(
+                    embed=create_embed(
+                        'Please specify the volume that you want'
                     ),
                     delete_after=10
                 )
@@ -1547,7 +1561,7 @@ class Music(commands.Cog, name='Music'):
     @playlist.command(
         name='delete',
         description='Delete an existing playlist',
-        usage='`.delete [playlist name]`',
+        usage='`.playlist delete [playlist name]`',
         aliases=['del', ]
     )
     async def delete(self, ctx, *, name: str):
