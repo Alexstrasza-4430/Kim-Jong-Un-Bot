@@ -14,6 +14,16 @@ db = client['DaedBot']
 guildcol = db['prefix']
 queuecol = db['queue']
 playlistcol = db['playlist']
+blacklist_admin = db['adminblacklist']
+
+
+def blacklist_check():
+    def predicate(ctx):
+        author_id = ctx.author.id
+        if blacklist_admin.find_one({'user_id': author_id}):
+            return False
+        return True
+    return commands.check(predicate)
 
 
 class System(commands.Cog, name='System'):
@@ -83,7 +93,7 @@ class System(commands.Cog, name='System'):
         pages = math.ceil(len(guilds)/10)
         if 1 <= page <= pages:
             counter = 1+(page-1)*10
-            for guild in guilds:
+            for guild in guilds[(page-1)*10:page*10]:
                 output += f'{counter}. {guild.name}\n'
                 counter += 1
             embed = discord.Embed(
@@ -102,6 +112,111 @@ class System(commands.Cog, name='System'):
             await ctx.send(
                 embed=create_embed(
                     'The page you specified does not exist'
+                ),
+                delete_after=10
+            )
+
+    @commands.command(
+        name='leaveserver',
+        description='Leave the server of your choice',
+        usage='`.leaveserver [number on list]`'
+    )
+    @commands.is_owner()
+    async def leaveserver(self, ctx, pos: int):
+        guilds = self.client.guilds
+        guild = guilds[pos-1]
+        await guild.leave()
+        await ctx.send(
+            embed=create_embed(
+                f'Left {guild.name}'
+            )
+        )
+
+    @commands.command(
+        name='adminblacklist',
+        description='Blacklist anyone you hate from using the bot',
+        usage='`.adminblacklist [userid]`'
+    )
+    @commands.is_owner()
+    async def adminblacklist(self, ctx, userid: int):
+        if blacklist_admin.find_one({'user_id': userid}):
+            await ctx.send(
+                embed=create_embed(
+                    'User ID already blacklisted'
+                )
+            )
+        else:
+            if self.client.get_user(userid) != None:
+                blacklist_admin.insert_one({'user_id': userid})
+                await ctx.send(
+                    embed=create_embed(
+                        f'User ID {userid} blacklisted'
+                    ),
+                    delete_after=30
+                )
+            else:
+                await ctx.send(
+                    embed=create_embed(
+                        'User not found'
+                    ),
+                    delete_after=30
+                )
+
+    @commands.command(
+        name='showadminblacklist',
+        description='List all banned user',
+        usage='`.showadminblacklist [page]`'
+    )
+    @commands.is_owner()
+    async def showadminblacklist(self, ctx, page: int = 1):
+        output = ''
+        blacklisted = blacklist_admin.find()
+        pages = math.ceil(blacklisted.count()/10)
+        if 1 <= page <= pages:
+            counter = 1+(page-1)*10
+            for user in blacklisted[(page-1)*10:page*10]:
+                user = self.client.get_user(user['user_id'])
+                output += f'{counter}. {user.name} | {user.id}'
+                counter += 1
+            embed = discord.Embed(
+                color=discord.Color.orange(),
+                description=output,
+                title='**BLACKLIST**',
+                timestamp=ctx.message.created_at
+            )
+            embed.set_footer(
+                text=f'Page {page} of {pages}'
+            )
+            await ctx.send(
+                embed=embed
+            )
+        else:
+            await ctx.send(
+                embed=create_embed(
+                    'The page you specified does not exist'
+                ),
+                delete_after=10
+            )
+
+    @commands.command(
+        name='adminwhitelist',
+        description='Stop blacklisting someone',
+        usage='`.adminwhitelist [userid]`'
+    )
+    @commands.is_owner()
+    async def adminwhitelist(self, ctx, userid: int):
+        if blacklist_admin.find_one({'user_id': userid}):
+            blacklist_admin.delete_one({'user_id': userid})
+            await ctx.send(
+                embed=create_embed(
+                    f'User ID {userid} whitelisted'
+                ),
+                delete_after=30
+            )
+        else:
+            await ctx.send(
+                embed=create_embed(
+                    'User not found'
                 ),
                 delete_after=10
             )
@@ -252,7 +367,7 @@ class System(commands.Cog, name='System'):
         guildcol.delete_one({'guild_id': guild.id})
         queuecol.delete_many({'guild_id': guild.id})
         playlistcol.delete_many({'guild_id': guild.id})
-
+'''
     @commands.Cog.listener()
     async def on_command_error(self, ctx, error):
         if isinstance(error, commands.CommandNotFound):
@@ -263,7 +378,7 @@ class System(commands.Cog, name='System'):
                 delete_after=10
             )
             await ctx.message.delete()
-
+'''
 
 def setup(client):
     client.add_cog(System(client))

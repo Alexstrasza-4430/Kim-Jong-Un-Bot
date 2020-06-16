@@ -18,6 +18,16 @@ db = client['DaedBot']
 guildcol = db['prefix']
 queuecol = db['queue']
 playlistcol = db['playlist']
+blacklist_admin = db['adminblacklist']
+
+
+def blacklist_check():
+    def predicate(ctx):
+        author_id = ctx.author.id
+        if blacklist_admin.find_one({'user_id': author_id}):
+            return False
+        return True
+    return commands.check(predicate)
 
 
 # Helper to create audio player
@@ -70,7 +80,7 @@ class Music(commands.Cog, name='Music'):
         try:
             with youtube_dl.YoutubeDL(self.opts) as ydl:
                 info = ydl.extract_info(
-                    url,
+                    url+' ',
                     download=False
                 )
         except (utils.ExtractorError, utils.DownloadError, utils.UnavailableVideoError) as error:
@@ -103,7 +113,7 @@ class Music(commands.Cog, name='Music'):
             try:
                 with youtube_dl.YoutubeDL(self.opts) as ydl:
                     info = ydl.extract_info(
-                        item['queue'][pointer]['url'],
+                        item['queue'][pointer]['url']+' ',
                         download=False
                     )
             except (utils.ExtractorError, utils.DownloadError, utils.UnavailableVideoError) as error:
@@ -188,6 +198,7 @@ class Music(commands.Cog, name='Music'):
         usage='`.join`'
     )
     @ensure_voice()
+    @blacklist_check()
     async def join(self, ctx, arg=None):
         if arg != None:
             await ctx.send(
@@ -252,6 +263,7 @@ class Music(commands.Cog, name='Music'):
         description='Disconnect from the voice channel',
         usage='`.leave`'
     )
+    @blacklist_check()
     async def leave(self, ctx, arg=None):
         if arg != None:
             await ctx.send(
@@ -264,8 +276,15 @@ class Music(commands.Cog, name='Music'):
             voice = ctx.voice_client
             if voice != None:
                 if voice.channel == ctx.author.voice.channel:
-                    queuecol.delete_one({'guild_id': ctx.guild.id})
-                    await voice.disconnect()
+                    queuecol.update_one(
+                        {'guild_id': ctx.guild.id},
+                        {
+                            '$set': {
+                                'size': 0
+                            }
+                        }
+                    )
+                    voice.stop()
                     await ctx.send(
                         embed=create_embed(
                             f'Bot disconnected from **{voice.channel}**'
@@ -274,8 +293,7 @@ class Music(commands.Cog, name='Music'):
                     )
                 else:
                     if self.ensure_bot_alone(ctx):
-                        if voice.is_playing() or voice.is_paused():
-                            queuecol.update_one(
+                        queuecol.update_one(
                                 {'guild_id': ctx.guild.id},
                                 {
                                     '$set': {
@@ -283,10 +301,7 @@ class Music(commands.Cog, name='Music'):
                                     }
                                 }
                             )
-                            voice.stop()
-                        else:
-                            queuecol.delete_one({'guild_id': ctx.guild.id})
-                            await voice.disconnect()
+                        voice.stop()
                         await ctx.send(
                             embed=create_embed(
                                 f'Bot disconnected from **{voice.channel}**'
@@ -315,6 +330,7 @@ class Music(commands.Cog, name='Music'):
         usage='`.play [url or song name]`'
     )
     @ensure_voice()
+    @blacklist_check()
     async def play(self, ctx, *, url: str):
         text_channel = ctx.channel
         channel = ctx.author.voice.channel
@@ -686,6 +702,7 @@ class Music(commands.Cog, name='Music'):
         usage='`.pause`'
     )
     @ensure_voice()
+    @blacklist_check()
     async def pause(self, ctx, arg=None):
         if arg != None:
             await ctx.send(
@@ -751,6 +768,7 @@ class Music(commands.Cog, name='Music'):
         usage='`.resume`'
     )
     @ensure_voice()
+    @blacklist_check()
     async def resume(self, ctx, arg=None):
         if arg != None:
             await ctx.send(
@@ -847,6 +865,7 @@ class Music(commands.Cog, name='Music'):
         usage='`.stop`'
     )
     @ensure_voice()
+    @blacklist_check()
     async def stop(self, ctx, arg=None):
         if arg != None:
             await ctx.send(
@@ -908,6 +927,7 @@ class Music(commands.Cog, name='Music'):
         usage='`.skip [position]`'
     )
     @ensure_voice()
+    @blacklist_check()
     async def skip(self, ctx, pos: int = None):
         channel = ctx.author.voice.channel
         voice = ctx.voice_client
@@ -994,6 +1014,7 @@ class Music(commands.Cog, name='Music'):
         usage='`.vol [volume]`'
     )
     @ensure_voice()
+    @blacklist_check()
     async def volume(self, ctx, volume: int):
         if ctx.voice_client == None:
             await ctx.send(
@@ -1051,6 +1072,7 @@ class Music(commands.Cog, name='Music'):
         usage='`.queue [page]`'
     )
     @ensure_voice()
+    @blacklist_check()
     async def queue(self, ctx, page: int = 1):
         channel = ctx.author.voice.channel
         voice = ctx.voice_client
@@ -1133,6 +1155,7 @@ class Music(commands.Cog, name='Music'):
         usage='`.dequeue [song position in music queue]`'
     )
     @ensure_voice()
+    @blacklist_check()
     async def dequeue(self, ctx, position: int, arg=None):
         if arg != None:
             await ctx.send(
@@ -1219,6 +1242,7 @@ class Music(commands.Cog, name='Music'):
         usage='`.clearqueue`'
     )
     @ensure_voice()
+    @blacklist_check()
     async def clearqueue(self, ctx, arg=None):
         if arg != None:
             await ctx.send(
@@ -1270,6 +1294,7 @@ class Music(commands.Cog, name='Music'):
         usage='`.loop [all/one/off]`'
     )
     @ensure_voice()
+    @blacklist_check()
     async def loop(self, ctx, arg='all'):
         channel = ctx.author.voice.channel
         voice = ctx.voice_client
@@ -1350,6 +1375,7 @@ class Music(commands.Cog, name='Music'):
         description='Access playlist features',
         usage='`.playlist [option]`'
     )
+    @blacklist_check()
     async def playlist(self, ctx, page: int = 1):
         size = playlistcol.count_documents({'guild_id': ctx.guild.id})
         if size == 0:
@@ -1388,6 +1414,7 @@ class Music(commands.Cog, name='Music'):
         aliases=['p', ]
     )
     @ensure_voice()
+    @blacklist_check()
     async def playlist_play(self, ctx, *, name: str):
         playlist = playlistcol.find_one(
             {
@@ -1528,6 +1555,7 @@ class Music(commands.Cog, name='Music'):
         description='Create a playlist',
         usage='`.playlist create [playlist name]`'
     )
+    @blacklist_check()
     async def create(self, ctx, *, name: str):
         playlist = playlistcol.find_one(
             {
@@ -1564,6 +1592,7 @@ class Music(commands.Cog, name='Music'):
         usage='`.playlist delete [playlist name]`',
         aliases=['del', ]
     )
+    @blacklist_check()
     async def delete(self, ctx, *, name: str):
         playlist = playlistcol.find_one(
             {
@@ -1597,6 +1626,7 @@ class Music(commands.Cog, name='Music'):
         description='Add a song to an existing playlist',
         usage='`.playlist add [playlist name] [song name or url]`'
     )
+    @blacklist_check()
     async def add(self, ctx, name: str, *, url: str):
         playlist = playlistcol.find_one(
             {
@@ -1703,6 +1733,7 @@ class Music(commands.Cog, name='Music'):
         usage='`.playlist remove [song number] [playlist name]`',
         aliases=['rm']
     )
+    @blacklist_check()
     async def remove(self, ctx, position: int, *, name: str):
         playlist = playlistcol.find_one(
             {
@@ -1763,6 +1794,7 @@ class Music(commands.Cog, name='Music'):
         usage='`.playlist list [playlist name] [page]`',
         aliases=['ls']
     )
+    @blacklist_check()
     async def _list(self, ctx, name: str, page: int = 1):
         playlist = playlistcol.find_one(
             {
