@@ -109,7 +109,8 @@ class Music(commands.Cog, name='Music'):
         item = queuecol.find_one({'guild_id': guild.id})
         pointer = item['pointer']
         text_channel = self.client.get_channel(item['text_channel'])
-        while True:
+        restart = False
+        for i in range(3):
             try:
                 with youtube_dl.YoutubeDL(self.opts) as ydl:
                     info = ydl.extract_info(
@@ -125,7 +126,20 @@ class Music(commands.Cog, name='Music'):
                         delete_after=10
                     ), self.client.loop
                 )
-            break
+                restart = True
+            else:
+                restart = False
+                break
+        if restart:
+            asyncio.run_coroutine_threadsafe(
+                text_channel.send(
+                    embed=create_embed(
+                        'There is an error with Youtube service, bot is being restarted'
+                    ),
+                    delete_after=10
+                ), self.client.loop
+            )
+            os._exit(0)
         volume = item['volume']
         voice = guild.voice_client
         source = create_ytdl_source(info['url'], volume)
@@ -275,7 +289,7 @@ class Music(commands.Cog, name='Music'):
         else:
             voice = ctx.voice_client
             if voice != None:
-                if voice.channel == ctx.author.voice.channel:
+                if len(ctx.voice_client.channel.members) == 1:
                     queuecol.update_one(
                         {'guild_id': ctx.guild.id},
                         {
@@ -285,14 +299,16 @@ class Music(commands.Cog, name='Music'):
                         }
                     )
                     voice.stop()
+                    await voice.disconnect()
                     await ctx.send(
                         embed=create_embed(
                             f'Bot disconnected from **{voice.channel}**'
                         ),
                         delete_after=10
                     )
+
                 else:
-                    if self.ensure_bot_alone(ctx):
+                    if voice.channel == ctx.author.voice.channel:
                         queuecol.update_one(
                             {'guild_id': ctx.guild.id},
                             {
@@ -302,6 +318,7 @@ class Music(commands.Cog, name='Music'):
                             }
                         )
                         voice.stop()
+                        await voice.disconnect()
                         await ctx.send(
                             embed=create_embed(
                                 f'Bot disconnected from **{voice.channel}**'
@@ -1112,7 +1129,7 @@ class Music(commands.Cog, name='Music'):
                         )
                         embed.add_field(
                             name='Now Playing',
-                            value=f"[{info['title']}]({info['url']})",
+                            value=f"{pointer+1}. [{info['title']}]({info['url']})",
                             inline=False
                         )
                         embed.add_field(
@@ -1932,6 +1949,15 @@ class Music(commands.Cog, name='Music'):
                 voice = await voice_channel.connect(reconnect=True)
                 if queue['state'] == 'Playing':
                     if queue['size'] >= 1:
+                        if queue['loop'] != 'one':
+                            queuecol.update_one(
+                                {'guild_id': guild.id},
+                                {
+                                    '$inc': {
+                                        'pointer': -1
+                                    }
+                                }
+                            )
                         self.play_song(guild)
                         text_channel = guild.get_channel(queue['text_channel'])
                         await text_channel.send(
@@ -1945,6 +1971,10 @@ class Music(commands.Cog, name='Music'):
                     if queue['state'] == 'Playing':
                         if queue['size'] >= 1:
                             voice.resume()
+                elif not voice.is_playing():
+                    if queue['state'] == 'Playing':
+                        if queue['size'] >= 1:
+                            self.play_song(guild)
 
     @commands.Cog.listener()
     async def on_disconnect(self):
@@ -1953,6 +1983,35 @@ class Music(commands.Cog, name='Music'):
             guild = self.client.get_guild(queue['guild_id'])
             if guild.voice_client.is_playing():
                 guild.voice_client.pause()
+
+    @commands.Cog.listener()
+    async def on_resumed(self):
+        queues = queuecol.find()
+        for queue in queues:
+            guild = self.client.get_guild(queue['guild_id'])
+            voice = guild.voice_client
+            if voice == None:
+                voice_channel = guild.get_channel(queue['voice_channel'])
+                voice = await voice_channel.connect(reconnect=True)
+                if queue['state'] == 'Playing':
+                    if queue['size'] >= 1:
+                        self.play_song(guild)
+                        text_channel = guild.get_channel(queue['text_channel'])
+                        await text_channel.send(
+                            embed=create_embed(
+                                'Bot was restarted, playing from the most recent song in queue'
+                            ),
+                            delete_after=10
+                        )
+            else:
+                if voice.is_paused():
+                    if queue['state'] == 'Playing':
+                        if queue['size'] >= 1:
+                            voice.resume()
+                elif not voice.is_playing():
+                    if queue['state'] == 'Playing':
+                        if queue['size'] >= 1:
+                            self.play_song(guild)
 
     # Error handler
     @play.error

@@ -221,6 +221,20 @@ class System(commands.Cog, name='System'):
                 delete_after=10
             )
 
+    @commands.command(
+        name='restart',
+        description='Force restart the bot',
+        usage='`.restart'
+    )
+    @commands.is_owner()
+    async def restart(self, ctx):
+        await ctx.send(
+            embed=create_embed(
+                'Restarting Bot'
+            )
+        )
+        os._exit(0)
+
     # Error handler
     @reload.error
     async def reload_error(self, ctx, error):
