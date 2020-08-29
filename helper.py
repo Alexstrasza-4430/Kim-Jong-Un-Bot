@@ -1,8 +1,8 @@
 # Imports
 import discord
 import os
-from googleapiclient.discovery import build
 import urllib.parse as parse
+from googleapiclient.discovery import build
 
 
 # Create embed
@@ -14,7 +14,7 @@ def create_embed(text):
     return embed
 
 
-def get_id_and_plid(url):
+def youtube_get_id_and_plid(url):
     if url.startswith(('youtu', 'www')):
         url = 'https://'+url
     q = parse.urlparse(url)
@@ -56,12 +56,12 @@ def get_id_and_plid(url):
         return None
 
 
-def youtubeapi(str):
+def API_SEARCH(str):
     search_str = ''
     youtube_service = build('youtube', 'v3',
                             developerKey=os.environ.get('Youtube_API'))
-    if str.startswith(('https://', 'youtu', 'www')):
-        search_str = get_id_and_plid(str)
+    if str.startswith(('https://youtu', 'youtu', 'www.youtu', 'https://www.youtu')):
+        search_str = youtube_get_id_and_plid(str)
         if search_str != None:
             if len(search_str) == 2:
                 request = youtube_service.playlistItems().list(

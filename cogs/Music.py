@@ -5,6 +5,7 @@ import os
 import discord
 import pymongo
 import youtube_dl
+from googleapiclient.discovery import build
 from discord.ext import commands
 from youtube_dl import utils
 from helper import *
@@ -75,6 +76,11 @@ class Music(commands.Cog, name='Music'):
             'skip_download': True,
             'source_address': '0.0.0.0'
         }
+        self.youtube_service = build(
+            'youtube',
+            'v3',
+            developerKey=os.environ.get('Youtube_API')
+        )
 
     def extract_info(self, url, ctx):
         try:
@@ -204,6 +210,38 @@ class Music(commands.Cog, name='Music'):
                 self.play_song(guild)
 
         voice.play(source, after=after_playing)
+
+    @commands.command(
+        name='voiceping',
+        description='Calculate the current voice client latency',
+        usage='`.voiceping`'
+    )
+    @ensure_voice()
+    @blacklist_check()
+    async def voiceping(self, ctx, arg=None):
+        if arg != None:
+            await ctx.send(
+                embed=create_embed(
+                    'This command does not take in any other argument'
+                )
+            )
+        else:
+            voice = ctx.voice_client
+            if voice != None:
+                time = int(voice.latency*1000)
+                await ctx.send(
+                    embed=create_embed(
+                        f'The voice client ping is {time} ms!'
+                    ),
+                    delete_after=10
+                )
+            else:
+                await ctx.send(
+                    embed=create_embed(
+                        'Bot was not connected to any voice channel'
+                    ),
+                    delete_after=10
+                )
 
     @commands.command(
         name='join',
